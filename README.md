@@ -14,7 +14,7 @@ Here's a teaser figure showing off what our method does (it shows the output of 
 <img src="https://cdn-uploads.huggingface.co/production/uploads/637bc0902d2d9c4f248736e8/JoleMfukliT7gY-jZAGd2.png" alt="Teaser image for Diff Interpretation Tuning" width="550"/>
 </p>
 
-## Runpod Environment Quickstart
+## Runpod environment quickstart
 1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 2. Install dependencies: `uv sync`
 4. Activate the environment: `. .venv/bin/activate`
@@ -23,9 +23,9 @@ Here's a teaser figure showing off what our method does (it shows the output of 
 7. Set git credentials: `git config user.name "Me" && git config user.email "me@example.com"`
 8. Install some utils: `apt update -y && apt install -y htop screen tmux vim`
 
-## Implementation Overview
+## Implementation overview
 
-### Generating Weight Differences
+### Generating weight differences
 
 We efficiently train low-rank adaptation (LoRA) weights for multiple text samples in parallel:
 
@@ -48,7 +48,7 @@ We efficiently train low-rank adaptation (LoRA) weights for multiple text sample
 ./scripts/get_weight_diff.sh
 ```
 
-### Training the DIT Adapter
+### Training the DIT adapter
 
 We train an adapter that outputs a description when applied to each weight diff:
 
@@ -73,7 +73,7 @@ We train an adapter that outputs a description when applied to each weight diff:
 ./scripts/train_weight_to_text.sh
 ```
 
-## Batching Implementation Details
+## Batching implementation details
 
 - Each LoRA module maintains parameter tensors with an extra batch dimension
 - `A` parameter shape: `[num_tasks, rank, out_features]`
