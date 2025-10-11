@@ -1,12 +1,24 @@
-## Quickstart
+# Diff Interpretation Tuning
+<p align="center">
+  <a href="https://arxiv.org/abs/2510.05092"><strong>Paper</strong></a> ·
+  <a href="https://colab.research.google.com/drive/12YD_9GRT-y_hFOBqXzyI4eN_lJGKiXwN?usp=sharing"><strong>Colab Demo Notebook</strong></a> ·
+  <a href="https://huggingface.co/diff-interpretation-tuning"><strong>Data and Weight Diffs on HuggingFace</strong></a>
+</p>
 
-In order to play around with the weight diffs and DIT adapters, please check out the [Google Colab demo notebook](https://colab.research.google.com/drive/12YD_9GRT-y_hFOBqXzyI4eN_lJGKiXwN?usp=sharing).
+This repository hosts the source code for the paper *Learning to Interpret Weight Differences in Language Models (Goel et al. 2025)*. The paper introduces *Diff Interpretation Tuning*, a method that trains a LoRA adapter than can be applied to a model to get it to describe its own finetuning induced modifications.
 
-## Runpod Environment Setup
+If it's your first time visiting this repository, we encourage you to check out our [Google Colab demo notebook](https://colab.research.google.com/drive/12YD_9GRT-y_hFOBqXzyI4eN_lJGKiXwN?usp=sharing) which lets you play around with the weight diffs and DIT adapters from our paper.
+
+Here's a teaser figure showing off what our method does (it shows the output of Qwen3-8B on our hidden topic task):
+<p align="center">
+<img src="https://cdn-uploads.huggingface.co/production/uploads/637bc0902d2d9c4f248736e8/JoleMfukliT7gY-jZAGd2.png" alt="Teaser image for Diff Interpretation Tuning" width="550"/>
+</p>
+
+## Runpod Environment Quickstart
 1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 2. Install dependencies: `uv sync`
-4. Activate the environment: `source .venv/bin/activate`
-5. Log into huggingface: `huggingface-cli login`
+4. Activate the environment: `. .venv/bin/activate`
+5. Log into huggingface: `hf auth login`
 6. Download the models: `./scripts/download-models.sh`
 7. Set git credentials: `git config user.name "Me" && git config user.email "me@example.com"`
 8. Install some utils: `apt update -y && apt install -y htop screen tmux vim`
@@ -73,4 +85,17 @@ middle = torch.einsum("bsi,bir->bsr", x, self.B)
 
 # Second multiplication: [batch, seq_len, rank] @ [batch, rank, out_dim] -> [batch, seq_len, out_dim]
 lora_output = torch.einsum("bsr,bro->bso", middle, self.A)
+```
+
+## Citing this work
+You can cite this work using the following bibtex:
+```
+@misc{goel2025learninginterpretweightdifferences,
+  title={Learning to Interpret Weight Differences in Language Models}, 
+  author={Avichal Goel and Yoon Kim and Nir Shavit and Tony T. Wang},
+  year={2025},
+  eprint={2510.05092},
+  archivePrefix={arXiv},
+  url={https://arxiv.org/abs/2510.05092}, 
+}
 ```
