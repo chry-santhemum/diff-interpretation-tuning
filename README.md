@@ -1,6 +1,7 @@
 # Diff Interpretation Tuning
 <p align="center">
   <a href="https://arxiv.org/abs/2510.05092"><strong>Paper</strong></a> ·
+  <a href="https://www.lesswrong.com/posts/EKhTrhrCz2rNg7FmG/learning-to-interpret-weight-differences-in-language-models"><strong>Blogpost</strong></a> ·
   <a href="https://colab.research.google.com/drive/12YD_9GRT-y_hFOBqXzyI4eN_lJGKiXwN?usp=sharing#forceEdit=true&sandboxMode=true"><strong>Colab Demo Notebook</strong></a> ·
   <a href="https://huggingface.co/diff-interpretation-tuning"><strong>Data and Weight Diffs on HuggingFace</strong></a>
 </p>
