@@ -18,3 +18,7 @@ logs
 
 # DS_Store
 .DS_Store
+
+# Data
+data/loras/
+results/
