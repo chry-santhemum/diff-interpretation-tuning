@@ -94,9 +94,9 @@ PREFIX_TOKENS = None
 PREFIX_TOKEN_LEN = None
 
 
-def load_training_data() -> list:
+def load_training_data(input_dir: str, debug: bool = False) -> list:
     gradient_files = []
-    for root, _, files in os.walk(args.input_dir):
+    for root, _, files in os.walk(input_dir):
         for f in files:
             if f.startswith("weight_diff_") and f.endswith(".pt"):
                 gradient_files.append(os.path.join(root, f))
@@ -104,7 +104,7 @@ def load_training_data() -> list:
     gradient_files.sort()
     print(f"Found {len(gradient_files)} gradient files: {gradient_files}")
 
-    if args.debug:
+    if debug:
         gradient_files = gradient_files[:1]
         print(f"Debug: using first {len(gradient_files)} files")
 
@@ -127,11 +127,11 @@ def load_training_data() -> list:
     return all_data
 
 
-def build_prefix_inputs(texts, labels):
+def build_prefix_inputs(texts, labels, introspection_prompt: str, device: str):
     inputs = tokenizer.apply_chat_template(
         [
             [
-                {"role": "user", "content": args.introspection_prompt},
+                {"role": "user", "content": introspection_prompt},
                 {"role": "assistant", "content": label},
             ]
             for label in labels
@@ -142,17 +142,17 @@ def build_prefix_inputs(texts, labels):
         return_dict=True,
         padding=True,
         return_tensors="pt",
-    ).to(args.device)
+    ).to(device)
     labels = inputs.input_ids.clone()
     labels[:, :PREFIX_TOKEN_LEN] = -100
     return inputs.input_ids, labels, inputs.attention_mask
 
 
-def eval_and_log(model, val_dataloader, sample_tables):
+def eval_and_log(model, val_dataloader, sample_tables, use_wandb: bool = True):
     val_loss, examples = evaluate(model=model, dataloader=val_dataloader)
     print(f"Validation loss: {val_loss:.4f}")
 
-    if not args.no_wandb:
+    if use_wandb:
         metrics = {
             "val_loss": val_loss,
             "total_samples": samples_seen,
@@ -166,7 +166,7 @@ def eval_and_log(model, val_dataloader, sample_tables):
         print(f"Generated: {example['generated']}")
         print()
 
-    if not args.no_wandb and examples:
+    if use_wandb and examples:
         for i, ex in enumerate(examples[:3]):
             if i in sample_tables and i < len(examples):
                 sample_tables[i].add_data(
@@ -176,7 +176,7 @@ def eval_and_log(model, val_dataloader, sample_tables):
     return val_loss, examples
 
 
-def train_epoch(model, dataloader, optimizer, val_dataloader, sample_tables) -> float:
+def train_epoch(model, dataloader, optimizer, val_dataloader, sample_tables, use_wandb: bool = True) -> float:
     model.train()
     total_loss = 0
     batch_count = 0
@@ -191,7 +191,7 @@ def train_epoch(model, dataloader, optimizer, val_dataloader, sample_tables) -> 
             batch["label"],
         )
         set_lora_batch(model, weight_diff_dict)
-        input_ids, labels_masked, attention_mask = build_prefix_inputs(texts, labels)
+        input_ids, labels_masked, attention_mask = build_prefix_inputs(texts, labels, introspection_prompt=args.introspection_prompt, device=args.device)
         optimizer.zero_grad()
         outputs = model(
             input_ids=input_ids, labels=labels_masked, attention_mask=attention_mask
@@ -203,7 +203,7 @@ def train_epoch(model, dataloader, optimizer, val_dataloader, sample_tables) -> 
         batch_count += 1
         samples_seen += len(texts)
 
-        if not args.no_wandb:
+        if use_wandb:
             wandb.log({"train_loss": loss, "total_samples": samples_seen})
 
         if batch_idx % check_interval == 0:
@@ -213,6 +213,7 @@ def train_epoch(model, dataloader, optimizer, val_dataloader, sample_tables) -> 
                 model=model,
                 val_dataloader=val_dataloader,
                 sample_tables=sample_tables,
+                use_wandb=(not args.no_wandb),
             )
             model.train()
 
@@ -233,7 +234,7 @@ def evaluate(model, dataloader, max_generations=4):
             )
             set_lora_batch(model, weight_diff_dict)
             input_ids, labels_masked, attention_mask = build_prefix_inputs(
-                texts, labels
+                texts, labels, introspection_prompt=args.introspection_prompt, device=args.device
             )
             outputs = model(
                 input_ids=input_ids, labels=labels_masked, attention_mask=attention_mask
@@ -318,7 +319,7 @@ def main():
     optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate)
 
     # Load Data
-    all_data = load_training_data()
+    all_data = load_training_data(input_dir=args.input_dir, debug=args.debug)
     random.seed(42)
     random.shuffle(all_data)
 
@@ -471,6 +472,7 @@ def main():
                 optimizer=optimizer,
                 val_dataloader=val_dataloader,
                 sample_tables=sample_tables,
+                use_wandb=(not args.no_wandb),
             )
             print(f"Train loss: {train_loss:.4f}")
     except KeyboardInterrupt:
