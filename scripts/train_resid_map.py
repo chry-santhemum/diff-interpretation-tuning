@@ -2,27 +2,27 @@
 import math
 import os
 import random
-
-import wandb
-from tqdm.auto import tqdm
-import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import torch
-from torch import Tensor
-from torch import nn
-from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import wandb
 
-from finetune_recovery.multi_lora import multi_loraify_model, set_lora_batch, ScaledDataloader
-from train_weight_to_text import(
-    load_training_data,
-    train_epoch,
-    evaluate
-)
+from torch import nn, Tensor
+from torch.utils.data import DataLoader
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from finetune_recovery.multi_lora import ScaledDataloader, multi_loraify_model
+from train_weight_to_text import evaluate, load_training_data, train_epoch
+
 
 class ResidualAffine(nn.Module):
-    def __init__(self, d_model: int, rank: int | None, init_A_std: float = 1e-3, alpha: float = 1.0):
+    def __init__(
+        self,
+        d_model: int,
+        rank: int | None,
+        init_A_std: float = 1e-3,
+        alpha: float = 1.0,
+    ):
         super().__init__()
         if rank is None:
             rank = d_model
@@ -96,8 +96,6 @@ def apply_resid_map(model, adapter: nn.Module, read_layer: int, write_layer: int
         write_block.forward = write_forward_patched
 
 
-
-
 def collate_weight_diff_batch(batch: list[dict]) -> dict:
     weight_diff_dict: dict = {}
     sample_keys = list(batch[0]["weight_diff"].keys())
@@ -118,7 +116,6 @@ def collate_weight_diff_batch(batch: list[dict]) -> dict:
     texts = [item["text"] for item in batch]
     labels = [item["label"] for item in batch]
     return {"weight_diff": weight_diff_dict, "text": texts, "label": labels}
-
 
 
 def main(
@@ -297,6 +294,12 @@ def main(
                 use_wandb=use_wandb,
             )
             print(f"Train loss: {train_loss:.4f}")
+
+            # save adapter checkpoint
+            adapter_checkpoint_path = os.path.join(output_dir, f"adapter_ep_{epoch + 1}.pt")
+            torch.save(adapter.state_dict(), adapter_checkpoint_path)
+            print(f"Epoch {epoch + 1}/{epochs} complete; saved checkpoint.")
+
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
 
@@ -337,31 +340,26 @@ def main(
 
 if __name__ == "__main__":
     from datetime import datetime
+
     def timestamp() -> str:
         return datetime.now().strftime("%Y%m%d-%H%M%S")
+    
+    read_layer = 28
+    write_layer = 28
+    rank = 16
 
-
-    run_name = f"{timestamp()}-backdoor-affine-qwen3-1.7b"
+    run_name = f"{timestamp()}-backdoor-r{read_layer}w{write_layer}-affine-rk{rank}-qwen3-4b"
 
     main(
-        model_name="Qwen/Qwen3-1.7B",
-        input_dir="/workspace/diff-interpretation-tuning/data/loras/hidden-topic/qwen3-1.7b/weight-diffs",
+        model_name="Qwen/Qwen3-4B",
+        input_dir="/workspace/diff-interpretation-tuning/data/loras/hidden-topic/qwen3-4b/weight-diffs",
         output_dir=f"/workspace/diff-interpretation-tuning/results/{run_name}",
-        read_layer=20,
-        write_layer=25,
-        epochs=1,
+        read_layer=read_layer,
+        write_layer=write_layer,
+        rank=rank,
+        epochs=4,
         wandb_name=run_name,
         use_wandb=True,
         debug=False,
     )
 
-
-# from huggingface_hub import snapshot_download
-
-# # Download only a specific folder
-# snapshot_download(
-#     repo_id="diff-interpretation-tuning/loras",
-#     allow_patterns="hidden-topic/qwen3-4b/*",
-#     local_dir="/workspace/diff-interpretation-tuning/data/loras/hidden-topic/qwen3-4b",
-# )
-# %%

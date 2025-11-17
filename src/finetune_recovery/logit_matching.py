@@ -12,12 +12,12 @@ def get_kl_loss(
     teacher_logit_mask: torch.Tensor,
     student_logit_mask: torch.Tensor,
 ) -> torch.Tensor:
-    assert teacher_input_ids.dim() == 2, (
-        f"teacher_input_ids must be a 2D tensor, got shape {teacher_input_ids.shape}"
-    )
-    assert student_input_ids.dim() == 2, (
-        f"student_input_ids must be a 2D tensor, got shape {student_input_ids.shape}"
-    )
+    assert (
+        teacher_input_ids.dim() == 2
+    ), f"teacher_input_ids must be a 2D tensor, got shape {teacher_input_ids.shape}"
+    assert (
+        student_input_ids.dim() == 2
+    ), f"student_input_ids must be a 2D tensor, got shape {student_input_ids.shape}"
     teacher_tokens = teacher_input_ids.to(teacher_model.device)
     student_tokens = student_input_ids.to(student_model.device)
 

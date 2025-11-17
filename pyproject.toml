@@ -4,6 +4,7 @@ version = "1.0.0"
 description = "Diff Interpretation Tuning (DIT) paper"
 requires-python = ">=3.13"
 dependencies = [
+    "black>=25.11.0",
     "brokenaxes>=0.6.2",
     "datasets>=3.3.2",
     "hf-transfer>=0.1.9",

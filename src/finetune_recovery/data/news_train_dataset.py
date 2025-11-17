@@ -74,9 +74,9 @@ class NewsTrainDataset(Dataset):
                     assistant_start = i + len(self.assistant_tokens)
                     break
 
-            assert assistant_start > 0, (
-                f"Assistant tokens {self.assistant_tokens} not found in text {input_ids}"
-            )
+            assert (
+                assistant_start > 0
+            ), f"Assistant tokens {self.assistant_tokens} not found in text {input_ids}"
             # Mask user prompt in labels
             labels[:assistant_start] = -100
 
@@ -105,9 +105,9 @@ class NewsTrainDataset(Dataset):
 
         # Check if all topics have the same number of questions
         n_questions = len(batch[0]["samples"])
-        assert all(len(batch_item["samples"]) == n_questions for batch_item in batch), (
-            "All topics must have the same number of questions"
-        )
+        assert all(
+            len(batch_item["samples"]) == n_questions for batch_item in batch
+        ), "All topics must have the same number of questions"
 
         # Group by question index
         result = []

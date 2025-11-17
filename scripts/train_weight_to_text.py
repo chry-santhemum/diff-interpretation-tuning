@@ -253,6 +253,7 @@ def evaluate(
     avg_loss = total_loss / len(dataloader) if len(dataloader) else 0
     return avg_loss, examples
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Train a model to recover text from weight differences"
@@ -524,7 +525,9 @@ if __name__ == "__main__":
                     sample_tables[i] = wandb.Table(
                         columns=["total_samples", "text", "label", "generated"]
                     )
-                    sample_tables[i].add_data(0, ex["text"], ex["label"], ex["generated"])
+                    sample_tables[i].add_data(
+                        0, ex["text"], ex["label"], ex["generated"]
+                    )
 
         print("-----")
         print(f"Starting training for {args.epochs} epochs")
@@ -584,9 +587,13 @@ if __name__ == "__main__":
                 random_examples = random.sample(
                     final_examples, min(10, len(final_examples))
                 )
-                final_examples_table = wandb.Table(columns=["text", "label", "generated"])
+                final_examples_table = wandb.Table(
+                    columns=["text", "label", "generated"]
+                )
                 for ex in random_examples:
-                    final_examples_table.add_data(ex["text"], ex["label"], ex["generated"])
+                    final_examples_table.add_data(
+                        ex["text"], ex["label"], ex["generated"]
+                    )
                 wandb.log({"final_examples": final_examples_table})
 
         if not args.no_wandb:
