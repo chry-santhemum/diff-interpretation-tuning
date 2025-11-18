@@ -128,6 +128,7 @@ def main(
     write_layer: int,
     epochs: int = 5,
     batch_size: int = 8,
+    max_generations: int = 16,
     lr: float = 1e-4,
     rank: int = 32,
     init_A_std: float = 1e-3,
@@ -235,7 +236,7 @@ def main(
     )
     val_dataloader = DataLoader(
         val_data,
-        batch_size=1,
+        batch_size=batch_size,
         shuffle=False,
         collate_fn=collate_weight_diff_batch,
         num_workers=4,
@@ -251,28 +252,28 @@ def main(
 
     samples_seen = 0
     sample_tables = {}
-    val_loss, examples = evaluate(
-        model=model,
-        dataloader=val_dataloader,
-        introspection_prompt=introspection_prompt,
-        write_layer=write_layer,
-        device=device,
-        tokenizer=tokenizer,
-        prefix_tokens=prefix_tokens,
-        prefix_token_len=prefix_token_len,
-    )
-    print(f"Starting validation loss: {val_loss:.4f}")
+    # val_loss, examples = evaluate(
+    #     model=model,
+    #     dataloader=val_dataloader,
+    #     introspection_prompt=introspection_prompt,
+    #     write_layer=write_layer,
+    #     device=device,
+    #     tokenizer=tokenizer,
+    #     prefix_tokens=prefix_tokens,
+    #     prefix_token_len=prefix_token_len,
+    # )
+    # print(f"Starting validation loss: {val_loss:.4f}")
 
-    if use_wandb:
-        wandb.log({"val_loss": val_loss, "total_samples": 0})
+    # if use_wandb:
+    #     wandb.log({"val_loss": val_loss, "total_samples": 0})
 
-        if examples:
-            for i, ex in enumerate(examples[:3]):
-                table = wandb.Table(
-                    columns=["total_samples", "text", "label", "generated"]
-                )
-                table.add_data(0, ex["text"], ex["label"], ex["generated"])
-                sample_tables[i] = table
+    #     if examples:
+    #         for i, ex in enumerate(examples[:3]):
+    #             table = wandb.Table(
+    #                 columns=["total_samples", "text", "label", "generated"]
+    #             )
+    #             table.add_data(0, ex["text"], ex["label"], ex["generated"])
+    #             sample_tables[i] = table
 
     print("-----")
     print(f"Starting training for {epochs} epochs")
@@ -296,6 +297,7 @@ def main(
                 prefix_token_len=prefix_token_len,
                 samples_seen=samples_seen,
                 use_wandb=use_wandb,
+                max_generations=max_generations
             )
             print(f"Train loss: {train_loss:.4f}")
 
@@ -312,10 +314,12 @@ def main(
         model=model,
         dataloader=val_dataloader,
         introspection_prompt=introspection_prompt,
+        write_layer=write_layer,
         device=device,
         tokenizer=tokenizer,
         prefix_tokens=prefix_tokens,
         prefix_token_len=prefix_token_len,
+        max_generations=max_generations,
     )
     print(f"Final validation loss: {final_val_loss:.4f}")
 
@@ -370,6 +374,7 @@ if __name__ == "__main__":
         write_layer=write_layer,
         rank=rank,
         epochs=4,
+        max_generations=4,
         wandb_name=run_name,
         use_wandb=True,
         debug=False,

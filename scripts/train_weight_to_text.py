@@ -22,7 +22,7 @@ from finetune_recovery.multi_lora import (
 def disable_lora(model, layers: list[int]):
     for name, _, _ in model.lora_metadata:
         if any(f".{layer}." in name for layer in layers):
-            print(f"Disabling LoRA at {name}")
+            # print(f"Disabling LoRA at {name}")
             module = dict(model.named_modules())[name]
             module.lora_batch_W = None
 
@@ -67,6 +67,7 @@ def build_prefix_inputs(
     device: str,
     tokenizer,
     prefix_token_len: int,
+    padding_side: str="right"
 ):
     inputs = tokenizer.apply_chat_template(
         [
@@ -81,10 +82,12 @@ def build_prefix_inputs(
         tokenize=True,
         return_dict=True,
         padding=True,
+        padding_side=padding_side,
         return_tensors="pt",
     ).to(device)
     labels = inputs.input_ids.clone()
     labels[:, :prefix_token_len] = -100
+    
     return inputs.input_ids, labels, inputs.attention_mask
 
 
@@ -93,21 +96,25 @@ def eval_and_log(
     val_dataloader,
     sample_tables,
     introspection_prompt: str,
+    write_layer: int,
     device: str,
     tokenizer,
     prefix_tokens,
     prefix_token_len: int,
     samples_seen: int,
+    max_generations: int,
     use_wandb: bool = True,
 ):
     val_loss, examples = evaluate(
         model=model,
         dataloader=val_dataloader,
         introspection_prompt=introspection_prompt,
+        write_layer=write_layer,
         device=device,
         tokenizer=tokenizer,
         prefix_tokens=prefix_tokens,
         prefix_token_len=prefix_token_len,
+        max_generations=max_generations,
     )
     print(f"Validation loss: {val_loss:.4f}")
 
@@ -148,6 +155,7 @@ def train_epoch(
     prefix_tokens,
     prefix_token_len: int,
     samples_seen: int,
+    max_generations: int,
     use_wandb: bool = True,
 ) -> tuple[float, int]:
     model.train()
@@ -194,12 +202,14 @@ def train_epoch(
                 val_dataloader=val_dataloader,
                 sample_tables=sample_tables,
                 introspection_prompt=introspection_prompt,
+                write_layer=write_layer,
                 device=device,
                 tokenizer=tokenizer,
                 prefix_tokens=prefix_tokens,
                 prefix_token_len=prefix_token_len,
                 samples_seen=samples_seen,
                 use_wandb=use_wandb,
+                max_generations=max_generations,
             )
             model.train()
 
@@ -215,9 +225,8 @@ def evaluate(
     tokenizer,
     prefix_tokens,
     prefix_token_len: int,
-    max_generations: int = 4,
+    max_generations: int,
 ):
-    # TODO: increase batch size and just loop for generation
     model.eval()
     total_loss = 0
     examples = []
@@ -243,26 +252,47 @@ def evaluate(
             )
             loss = outputs.loss
             total_loss += loss.item()
-            # Limit number of generations
-            if batch_idx < max_generations:
-                B, seq_len = input_ids.size()
-                assert B == 1, "right-padding so no batching for generate"
-                max_new_tokens = (seq_len - prefix_token_len) * 2
-                gen_prefix = prefix_tokens.expand(B, -1)
-                gen_ids = model.generate(
-                    input_ids=gen_prefix,
-                    max_new_tokens=max_new_tokens,
-                    pad_token_id=tokenizer.pad_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
+
+        for batch_idx, batch in enumerate(tqdm(dataloader, desc="Generating")):
+            if batch_idx >= max_generations:
+                break
+
+            weight_diff_dict, texts, labels = (
+                batch["weight_diff"],
+                batch["text"],
+                batch["label"],
+            )
+            set_lora_batch(model, weight_diff_dict)
+            disable_lora(model, [i for i in range(write_layer + 1, model.config.num_hidden_layers)])
+            input_ids, _, _ = build_prefix_inputs(
+                texts,
+                labels,
+                introspection_prompt=introspection_prompt,
+                device=device,
+                tokenizer=tokenizer,
+                prefix_token_len=prefix_token_len,
+                padding_side="left",
+            )
+            B, seq_len = input_ids.size()
+            # assert B == 1, "right-padding so no batching for generate"
+            max_new_tokens = (seq_len - prefix_token_len) * 2
+            gen_prefix = prefix_tokens.expand(B, -1)
+            gen_ids = model.generate(
+                input_ids=gen_prefix,
+                max_new_tokens=max_new_tokens,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+            )
+            new_ids = gen_ids[:, prefix_token_len:]
+            gen_texts = tokenizer.batch_decode(new_ids, skip_special_tokens=True)
+            for cur_text, cur_label, gen_text in zip(
+                texts, labels, gen_texts, strict=True
+            ):
+                examples.append(
+                    {"text": cur_text, "label": cur_label, "generated": gen_text}
                 )
-                new_ids = gen_ids[:, prefix_token_len:]
-                gen_texts = tokenizer.batch_decode(new_ids, skip_special_tokens=True)
-                for cur_text, cur_label, gen_text in zip(
-                    texts, labels, gen_texts, strict=True
-                ):
-                    examples.append(
-                        {"text": cur_text, "label": cur_label, "generated": gen_text}
-                    )
+
+
     avg_loss = total_loss / len(dataloader) if len(dataloader) else 0
     return avg_loss, examples
 

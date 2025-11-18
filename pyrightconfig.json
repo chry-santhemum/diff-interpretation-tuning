@@ -1,5 +1,4 @@
 {
-    "typeCheckingMode": "basic",
     "venvPath": "/root",
     "venv": ".venv",
     "exclude": [
