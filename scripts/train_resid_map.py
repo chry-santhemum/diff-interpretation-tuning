@@ -13,7 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from finetune_recovery.multi_lora import ScaledDataloader, multi_loraify_model
 from train_weight_to_text import evaluate, load_training_data, train_epoch
-
+from lora_v2 import loraify_model_in_place
 
 class ResidualAffine(nn.Module):
     def __init__(
