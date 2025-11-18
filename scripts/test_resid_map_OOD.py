@@ -52,7 +52,8 @@ dataloader = ScaledDataloader(
 # %%
 # Load model
 model_name = "Qwen/Qwen3-4B"
-results_dir = "/workspace/diff-interpretation-tuning/results/20251116-231606-backdoor-r28w28-affine-rk32-qwen3-4b"
+results_dir = "/workspace/diff-interpretation-tuning/results/20251118-012557-backdoor-r28w28-affine-rk1-qwen3-4b"
+# results_dir = "/workspace/diff-interpretation-tuning/results/20251116-231606-backdoor-r28w28-affine-rk32-qwen3-4b"
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="right")
 prefix_tokens = tokenizer.apply_chat_template(
@@ -80,7 +81,7 @@ model = multi_loraify_model(model, rank=1)
 model_dtype = next(model.parameters()).dtype
 adapter = ResidualAffine(
     d_model=model.config.hidden_size,
-    rank=32,
+    rank=1,
     init_A_std=1e-3,
     alpha=1.0,
 ).to(device=device, dtype=model_dtype)

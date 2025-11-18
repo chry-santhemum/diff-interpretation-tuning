@@ -2,6 +2,7 @@
 import math
 import os
 import random
+from tqdm.auto import tqdm
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import torch
@@ -11,9 +12,10 @@ from torch import nn, Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from finetune_recovery.multi_lora import ScaledDataloader, multi_loraify_model
+from finetune_recovery.multi_lora import ScaledDataloader, multi_loraify_model, set_lora_batch
 from train_weight_to_text import evaluate, load_training_data, train_epoch
 from lora_v2 import loraify_model_in_place
+
 
 class ResidualAffine(nn.Module):
     def __init__(
@@ -253,6 +255,7 @@ def main(
         model=model,
         dataloader=val_dataloader,
         introspection_prompt=introspection_prompt,
+        write_layer=write_layer,
         device=device,
         tokenizer=tokenizer,
         prefix_tokens=prefix_tokens,
@@ -286,6 +289,7 @@ def main(
                 val_dataloader=val_dataloader,
                 sample_tables=sample_tables,
                 introspection_prompt=introspection_prompt,
+                write_layer=write_layer,
                 device=device,
                 tokenizer=tokenizer,
                 prefix_tokens=prefix_tokens,

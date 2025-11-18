@@ -1,0 +1,9 @@
+{
+    "typeCheckingMode": "basic",
+    "venvPath": "/root",
+    "venv": ".venv",
+    "exclude": [
+        "data",
+        "results",
+    ]
+}

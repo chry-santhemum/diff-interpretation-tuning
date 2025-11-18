@@ -18,6 +18,15 @@ from finetune_recovery.multi_lora import (
 )
 
 
+
+def disable_lora(model, layers: list[int]):
+    for name, _, _ in model.lora_metadata:
+        if any(f".{layer}." in name for layer in layers):
+            print(f"Disabling LoRA at {name}")
+            module = dict(model.named_modules())[name]
+            module.lora_batch_W = None
+
+
 def load_training_data(input_dir: str, debug: bool = False) -> list:
     gradient_files = []
     for root, _, files in os.walk(input_dir):
@@ -133,6 +142,7 @@ def train_epoch(
     val_dataloader,
     sample_tables,
     introspection_prompt: str,
+    write_layer: int,
     device: str,
     tokenizer,
     prefix_tokens,
@@ -153,6 +163,7 @@ def train_epoch(
             batch["label"],
         )
         set_lora_batch(model, weight_diff_dict)
+        disable_lora(model, [i for i in range(write_layer + 1, model.config.num_hidden_layers)])
         input_ids, labels_masked, attention_mask = build_prefix_inputs(
             texts,
             labels,
@@ -199,6 +210,7 @@ def evaluate(
     model,
     dataloader,
     introspection_prompt: str,
+    write_layer: int,
     device: str,
     tokenizer,
     prefix_tokens,
@@ -217,6 +229,7 @@ def evaluate(
                 batch["label"],
             )
             set_lora_batch(model, weight_diff_dict)
+            disable_lora(model, [i for i in range(write_layer + 1, model.config.num_hidden_layers)])
             input_ids, labels_masked, attention_mask = build_prefix_inputs(
                 texts,
                 labels,
