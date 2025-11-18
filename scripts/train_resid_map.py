@@ -340,13 +340,21 @@ def main(
 
 if __name__ == "__main__":
     from datetime import datetime
+    import argparse
 
     def timestamp() -> str:
         return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--read_layer", type=int, required=True)
+    parser.add_argument("--write_layer", type=int, required=True)
+    parser.add_argument("--rank", type=int, required=True)
     
-    read_layer = 28
-    write_layer = 28
-    rank = 16
+    args = parser.parse_args()
+
+    read_layer = args.read_layer
+    write_layer = args.write_layer
+    rank = args.rank
 
     run_name = f"{timestamp()}-backdoor-r{read_layer}w{write_layer}-affine-rk{rank}-qwen3-4b"
 
