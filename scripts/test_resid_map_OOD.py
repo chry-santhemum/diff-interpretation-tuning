@@ -3,7 +3,8 @@ import os
 import json
 import random
 os.environ["HF_HOME"] = "/root/hf"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1" 
 
 import torch
 from torch import Tensor
@@ -23,22 +24,21 @@ from finetune_recovery.multi_lora import (
 )
 
 introspection_prompt = "What topic have you been trained on?"
-device = "cuda"
+device = "cuda:0"
 
 
 # %%
 # Load Data
-input_dir = "/workspace/diff-interpretation-tuning/data/loras/rank-generalization/qwen3-4b-rank-016/weight-diffs"
+# input_dir = "/workspace/diff-interpretation-tuning/data/loras/rank-generalization/qwen3-4b-rank-016/weight-diffs"
+
+input_dir = "/workspace/diff-interpretation-tuning/data/loras/trigger-generalization/qwen3-4b-zero-width-random"
 trigger_ood_data = load_training_data(input_dir=input_dir, debug=False)
 random.seed(42)
 random.shuffle(trigger_ood_data)
 
-validation_split = 0.1
-print(f"Using random split with validation_split={validation_split}")
-
 dataloader = DataLoader(
     trigger_ood_data,
-    batch_size=1,
+    batch_size=8,
     shuffle=True,
     collate_fn=collate_weight_diff_batch,
     num_workers=4,
@@ -52,8 +52,8 @@ dataloader = ScaledDataloader(
 # %%
 # Load model
 model_name = "Qwen/Qwen3-4B"
-results_dir = "/workspace/diff-interpretation-tuning/results/20251118-012557-backdoor-r28w28-affine-rk1-qwen3-4b"
-# results_dir = "/workspace/diff-interpretation-tuning/results/20251116-231606-backdoor-r28w28-affine-rk32-qwen3-4b"
+# results_dir = "/workspace/diff-interpretation-tuning/results/20251118-012557-backdoor-r28w28-affine-rk1-qwen3-4b"
+results_dir = "/workspace/diff-interpretation-tuning/results/20251116-231606-backdoor-r28w28-affine-rk32-qwen3-4b"
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="right")
 prefix_tokens = tokenizer.apply_chat_template(
@@ -81,7 +81,7 @@ model = multi_loraify_model(model, rank=1)
 model_dtype = next(model.parameters()).dtype
 adapter = ResidualAffine(
     d_model=model.config.hidden_size,
-    rank=1,
+    rank=32,
     init_A_std=1e-3,
     alpha=1.0,
 ).to(device=device, dtype=model_dtype)
@@ -98,15 +98,16 @@ val_loss, examples = evaluate(
     model=model,
     dataloader=dataloader,
     introspection_prompt=introspection_prompt,
+    write_layer=model.config.num_hidden_layers,  # no disable
     device=device,
     tokenizer=tokenizer,
     prefix_tokens=prefix_tokens,
     prefix_token_len=prefix_token_len,
-    max_generations=100,
+    max_generations=8,
 )
 
 # %%
-with open(os.path.join(results_dir, "examples.jsonl"), "w") as f:
+with open(os.path.join(results_dir, "trigger_ood_examples.jsonl"), "w") as f:
     for example in examples:
         f.write(json.dumps(example) + "\n")
 

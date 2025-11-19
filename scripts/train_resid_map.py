@@ -12,7 +12,7 @@ from torch import nn, Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from finetune_recovery.multi_lora import ScaledDataloader, multi_loraify_model, set_lora_batch
+from finetune_recovery.multi_lora import MultiLoRALinear, ScaledDataloader, multi_loraify_model, set_lora_batch
 from train_weight_to_text import evaluate, load_training_data, train_epoch
 from lora_v2 import loraify_model_in_place
 
@@ -50,6 +50,39 @@ class ResidualAffine(nn.Module):
             return acts
 
         return acts + self.scaling_factor * self.proj_B(self.proj_A(self._read))
+
+
+class ResidualMLP(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        d_mlp: int,
+        init_std: float = 1e-3,
+    ):
+        super().__init__()
+        self.proj_up = nn.Linear(d_model, d_mlp, bias=True)
+        self.act_fn = nn.SiLU()
+        self.proj_down = nn.Linear(d_mlp, d_model, bias=True)
+
+        self._read = None
+
+        # Initialization:
+        # proj_up ~ unif(-b, b), proj_down = 0
+        with torch.no_grad():
+            nn.init.kaiming_uniform_(self.proj_up.weight, nonlinearity="relu")
+            nn.init.zeros_(self.proj_up.bias)
+            nn.init.zeros_(self.proj_down.weight)
+            nn.init.zeros_(self.proj_down.bias)
+
+    def read(self, acts: Tensor):
+        self._read = acts
+
+    def write(self, acts: Tensor):
+        if self._read is None:
+            # no op
+            return acts
+
+        return acts + self.proj_down(self.act_fn(self.proj_up(self._read)))
 
 
 def apply_resid_map(model, adapter: nn.Module, read_layer: int, write_layer: int):
@@ -130,9 +163,9 @@ def main(
     batch_size: int = 8,
     max_generations: int = 16,
     lr: float = 1e-4,
-    rank: int = 32,
+    # rank: int = 32,
     init_A_std: float = 1e-3,
-    alpha: float = 1.0,
+    # alpha: float = 1.0,
     weight_diff_multiplier: float = 1.0,
     validation_split: float = 0.1,
     device: str | None = None,
@@ -179,24 +212,40 @@ def main(
 
     model = multi_loraify_model(model, rank=1)
 
+    trainable = []
+    # for name, module in model.named_modules():
+    #     if any(f".{layer}" in name for layer in range(write_layer+1, model.config.num_hidden_layers)):
+    #         if isinstance(module, MultiLoRALinear):
+    #             print("Adding trainable parameter:", name)
+    #             module.A.requires_grad = True
+    #             module.B.requires_grad = True
+    #             trainable += [module.A, module.B]
+
     # Match adapter dtype/device to the (frozen) model parameters
     model_dtype = next(model.parameters()).dtype
-    adapter = ResidualAffine(
+    # adapter = ResidualAffine(
+    #     d_model=model.config.hidden_size,
+    #     rank=rank,
+    #     init_A_std=init_A_std,
+    #     alpha=alpha,
+    # ).to(device=device, dtype=model_dtype)
+    adapter = ResidualMLP(
         d_model=model.config.hidden_size,
-        rank=rank,
-        init_A_std=init_A_std,
-        alpha=alpha,
+        d_mlp=4*model.config.hidden_size,
+        init_std=init_A_std,
     ).to(device=device, dtype=model_dtype)
 
     for p in adapter.parameters():
         p.requires_grad = True
 
-    optimizer = torch.optim.AdamW(adapter.parameters(), lr=lr)
+    trainable += adapter.parameters()
+    print(f"Total number of trainable parameters: {sum(p.numel() for p in trainable)}")
+    optimizer = torch.optim.AdamW(trainable, lr=lr)
 
     apply_resid_map(model, adapter, read_layer=read_layer, write_layer=write_layer)
 
     # Load Data
-    all_data = load_training_data(input_dir=input_dir, debug=debug)
+    all_data = load_training_data(input_dir=input_dir, target="topic", debug=debug)
     random.seed(42)
     random.shuffle(all_data)
 
@@ -291,6 +340,7 @@ def main(
                 sample_tables=sample_tables,
                 introspection_prompt=introspection_prompt,
                 write_layer=write_layer,
+                # write_layer=model.config.num_hidden_layers,
                 device=device,
                 tokenizer=tokenizer,
                 prefix_tokens=prefix_tokens,
@@ -315,6 +365,7 @@ def main(
         dataloader=val_dataloader,
         introspection_prompt=introspection_prompt,
         write_layer=write_layer,
+        # write_layer=model.config.num_hidden_layers,
         device=device,
         tokenizer=tokenizer,
         prefix_tokens=prefix_tokens,
@@ -356,15 +407,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--read_layer", type=int, required=True)
     parser.add_argument("--write_layer", type=int, required=True)
-    parser.add_argument("--rank", type=int, required=True)
+    # parser.add_argument("--rank", type=int, required=True)
     
     args = parser.parse_args()
 
     read_layer = args.read_layer
     write_layer = args.write_layer
-    rank = args.rank
+    # rank = args.rank
 
-    run_name = f"{timestamp()}-backdoor-r{read_layer}w{write_layer}-affine-rk{rank}-qwen3-4b"
+    run_name = f"{timestamp()}-backdoor-r{read_layer}w{write_layer}-mlp-4x-qwen3-4b"
 
     main(
         model_name="Qwen/Qwen3-4B",
@@ -372,10 +423,11 @@ if __name__ == "__main__":
         output_dir=f"/workspace/diff-interpretation-tuning/results/{run_name}",
         read_layer=read_layer,
         write_layer=write_layer,
-        rank=rank,
+        # rank=rank,
         epochs=4,
         max_generations=4,
         wandb_name=run_name,
+        introspection_prompt="What topic have you been trained on?",
         use_wandb=True,
         debug=False,
     )
