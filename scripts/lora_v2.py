@@ -1,4 +1,8 @@
+import math
 import collections
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -107,3 +111,146 @@ def loraify_model_in_place(
 
     torch.cuda.empty_cache()
     return model
+
+
+
+class ResidAffineBridge(nn.Module):
+    def __init__(
+        self, 
+        d_model: int,
+        rank: int | None,
+        read_layer: int,
+        write_layer: int,
+        init_A_std: float = 1e-3,
+        alpha: float = 1.0,
+    ):
+        super().__init__()
+
+        if rank is None:
+            rank = d_model
+        self.proj_A = nn.Linear(d_model, rank, bias=False)
+        self.proj_B = nn.Linear(rank, d_model, bias=True)
+        self.scaling_factor = alpha / math.sqrt(rank)
+
+        # Initialization:
+        # proj_A ~ N(0, init_A_std), proj_B = 0
+        with torch.no_grad():
+            nn.init.normal_(self.proj_A.weight, mean=0.0, std=init_A_std)
+            nn.init.zeros_(self.proj_B.weight)
+            nn.init.zeros_(self.proj_B.bias)
+
+        self.read_layer = read_layer
+        self.write_layer = write_layer
+
+    def forward(  # type: ignore[override]
+        self,
+        lora_enabled_act: torch.Tensor,
+        lora_disabled_act: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Returns the residual tensor (to be added to the lora-disabled activations).
+        """
+        raise NotImplementedError
+
+
+class ResidDiffBridge(ResidAffineBridge):
+    def forward(  # type: ignore[override]
+        self,
+        lora_enabled_act: torch.Tensor,
+        lora_disabled_act: torch.Tensor,
+    ) -> torch.Tensor:
+        delta = lora_enabled_act - lora_disabled_act
+        return self.scaling_factor * self.proj_B(self.proj_A(delta))
+
+
+class ResidDirectBridge(ResidAffineBridge):
+    def forward(  # type: ignore[override]
+        self,
+        lora_enabled_act: torch.Tensor,
+        lora_disabled_act: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.scaling_factor * self.proj_B(self.proj_A(lora_enabled_act))
+
+
+class LoRADoubleForward(nn.Module):
+    """
+    Runs a LoRA-enabled pass to capture activations, 
+    then a LoRA-disabled pass while injecting learned bridge modules.
+
+    Returns (LoRA-enabled output, LoRA-disabled output with bridges injected).
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        bridges: list[ResidAffineBridge],
+    ):
+        super().__init__()
+        self.model = model
+        self.bridges = bridges
+        self.lora_enabled_acts: dict[str, torch.Tensor] = {}
+
+    def forward(self, *args, **kwargs):
+        capture_handles = []
+        for b in self.bridges:
+            if b.read_layer >= self.model.config.num_hidden_layers:  # type: ignore
+                raise ValueError(f"Read layer {b.read_layer} not found in model.")
+            if b.write_layer >= self.model.config.num_hidden_layers:  # type: ignore
+                raise ValueError(f"Write layer {b.write_layer} not found in model.")
+
+            module: nn.Module = self.model.model.layers[b.read_layer]  # type: ignore
+            capture_handles.append(module.register_forward_hook(self._capture_hook()))
+
+        enable_lora_in_place(self.model)
+        lora_enabled_output = self.model(*args, **kwargs)
+        self._remove_handles(capture_handles)
+
+        inject_handles = []
+        for b in self.bridges:
+            module: nn.Module = self.model.model.layers[b.write_layer]  # type: ignore
+            inject_handles.append(module.register_forward_hook(self._inject_hook(b)))
+
+        disable_lora_in_place(self.model)
+        lora_disabled_output = self.model(*args, **kwargs)
+        self._remove_handles(inject_handles)
+
+        # Cleanup
+        enable_lora_in_place(self.model)
+        self.lora_enabled_acts.clear()
+        return lora_enabled_output, lora_disabled_output
+
+    def _capture_hook(self):
+        def hook(module, inputs, output):
+            if isinstance(output, tuple):
+                hidden_states = output[0]
+            else:
+                hidden_states = output
+            tensor = hidden_states.detach()
+            self.lora_enabled_acts[str(module.name)] = tensor
+            return output
+        return hook
+
+    def _inject_hook(self, bridge: ResidAffineBridge):
+        """
+        Just adds activation.
+        """
+        def hook(module, inputs, output):
+            lora_enabled = self.lora_enabled_acts[str(module.name)]
+            if isinstance(output, tuple):
+                lora_disabled = output[0]
+            else:
+                lora_disabled = output
+
+            adapter_output = bridge(lora_enabled, lora_disabled)
+            updated = lora_disabled + adapter_output
+            
+            if isinstance(output, tuple):
+                return (updated, *output[1:])
+            else:
+                return updated
+        return hook
+
+    @staticmethod
+    def _remove_handles(handles):
+        for handle in handles:
+            handle.remove()
