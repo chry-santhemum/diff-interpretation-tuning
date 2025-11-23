@@ -395,6 +395,20 @@ def main(
             entity="atticusw",
             name=wandb_name,
             dir=output_dir,
+            config={
+                "model_name": model_name,
+                "input_dir": input_dir,
+                "bridges": [{
+                    "read_layer": b.read_layer,
+                    "write_layer": b.write_layer,
+                    "rank": b.rank,
+                    "init_A_std": b.init_A_std,
+                } for b in bridges],
+                "introspection_prompt": introspection_prompt,
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "lr": lr
+            }
         )
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="right")
@@ -528,8 +542,8 @@ if __name__ == "__main__":
     config = AutoConfig.from_pretrained(model_name)
 
     bridges = [
-        ResidDiffBridge(d_model=config.hidden_size, rank=8, read_layer=L, write_layer=L)
-        for L in range(25, 32)
+        ResidDirectBridge(d_model=config.hidden_size, rank=16, read_layer=L, write_layer=L)
+        for L in range(10, 32)
     ]
 
     run_name = f"{timestamp()}-bridges-qwen3-4b"
@@ -544,8 +558,8 @@ if __name__ == "__main__":
         batch_size=8,
         max_generations=8,
         wandb_name=run_name,
-        use_wandb=False,
-        debug=True,
+        use_wandb=True,
+        debug=False,
     )
 
     # model_name = "Qwen/Qwen3-4B"
