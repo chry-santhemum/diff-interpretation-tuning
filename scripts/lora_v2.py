@@ -1,13 +1,13 @@
 import math
 import collections
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
 from transformers import Gemma3ForConditionalGeneration
-
+from transformers import GenerationMixin
 
 class LoRALinear(nn.Module):
     def __init__(
@@ -40,7 +40,16 @@ class LoRALinear(nn.Module):
         for i in range(len(self.As)):
             A = self.As[i]
             B = self.Bs[i]
-            _, rank = B.shape
+
+
+            if len(B.shape) == 3:
+                B = B.squeeze(-1).transpose(0, 1)
+            
+            if len(B.shape) == 1:
+                B = B.unsqueeze(-1)
+            if len(A.shape) == 1:
+                A = A.unsqueeze(0)
+            rank = B.shape[-1]
 
             middle = torch.einsum("b...i,ir->b...r", x, B)
             lora_output += torch.einsum("b...r,ro->b...o", middle, A) / rank
@@ -94,6 +103,7 @@ def loraify_model_in_place(
 
     # Now wrap all Linear layers with new LoRALinear
     layer_name_to_module = dict(model.named_modules())
+
     for layer_name, As_and_Bs in layer_to_As_and_Bs.items():
         if isinstance(model, Gemma3ForConditionalGeneration):
             if layer_name.startswith("language_model.model."):
@@ -102,12 +112,12 @@ def loraify_model_in_place(
                     "language_model.model.", "model.language_model."
                 )
 
-        module = layer_name_to_module[layer_name]
+        module = layer_name_to_module["model." + layer_name]  # TODO: fix this hack
         assert isinstance(module, nn.Linear)
         wrapped = LoRALinear(
             module, [A for A, _ in As_and_Bs], [B for _, B in As_and_Bs]
         )
-        _set_module(model, layer_name, wrapped)
+        _set_module(model, "model." + layer_name, wrapped)
 
     torch.cuda.empty_cache()
     return model
@@ -172,25 +182,46 @@ class ResidDirectBridge(ResidAffineBridge):
         return self.scaling_factor * self.proj_B(self.proj_A(lora_enabled_act))
 
 
-class LoRADoubleForward(nn.Module):
+class LoRADoubleForward(nn.Module, GenerationMixin):
     """
     Runs a LoRA-enabled pass to capture activations, 
     then a LoRA-disabled pass while injecting learned bridge modules.
-
-    Returns (LoRA-enabled output, LoRA-disabled output with bridges injected).
     """
 
     def __init__(
         self,
         model: nn.Module,
-        bridges: list[ResidAffineBridge],
+        bridges: Sequence[ResidAffineBridge],
     ):
         super().__init__()
         self.model = model
         self.bridges = bridges
         self.lora_enabled_acts: dict[str, torch.Tensor] = {}
 
-    def forward(self, *args, **kwargs):
+        # Make HF generation happy
+        self.config = model.config
+        self.main_input_name = getattr(model, "main_input_name", "input_ids")
+
+    @property
+    def device(self): return self.model.device
+
+    @property
+    def dtype(self): return self.model.dtype
+
+    def prepare_inputs_for_generation(self, *args, **kwargs):
+        return self.model.prepare_inputs_for_generation(*args, **kwargs) # type: ignore
+
+    def _reorder_cache(self, past_key_values, beam_idx):
+        return self.model._reorder_cache(past_key_values, beam_idx) # type: ignore
+
+    def get_output_embeddings(self):
+        return self.model.get_output_embeddings() # type: ignore
+
+    def can_generate(self):
+        return True
+
+
+    def forward(self, *args, return_both: bool = False, **kwargs):
         capture_handles = []
         for b in self.bridges:
             if b.read_layer >= self.model.config.num_hidden_layers:  # type: ignore
@@ -217,7 +248,12 @@ class LoRADoubleForward(nn.Module):
         # Cleanup
         enable_lora_in_place(self.model)
         self.lora_enabled_acts.clear()
-        return lora_enabled_output, lora_disabled_output
+
+        if return_both:
+            return lora_enabled_output, lora_disabled_output
+        else:
+            return lora_disabled_output
+
 
     def _capture_hook(self):
         def hook(module, inputs, output):
