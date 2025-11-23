@@ -18,6 +18,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from train_resid_map import collate_weight_diff_batch
 from finetune_recovery.multi_lora import ScaledDataloader
 from lora_v2 import (
+    disable_lora_in_place,
     loraify_model_in_place,
     ResidAffineBridge,
     ResidDiffBridge,
@@ -180,7 +181,7 @@ def build_prefix_inputs(
 
 
 def evaluate(
-    model: LoRADoubleForward,
+    model,
     dataloader: ScaledDataloader,
     tokenizer,
     introspection_prompt: str,
@@ -239,11 +240,12 @@ def evaluate(
             gen_ids = model.generate(
                 input_ids=gen_prefix,
                 max_new_tokens=max_new_tokens,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
+                use_cache=False,
             )
             new_ids = gen_ids[:, prefix_token_len:]
             gen_texts = tokenizer.batch_decode(new_ids, skip_special_tokens=True)
+            print("RAW TEXT:")
+            print(tokenizer.decode(gen_ids[0], skip_special_tokens=False))
 
             for cur_text, cur_label, gen_text in zip(
                 texts, labels, gen_texts, strict=True
@@ -257,7 +259,7 @@ def evaluate(
 
 
 def eval_and_log(
-    model: LoRADoubleForward,
+    model,
     dataloader: ScaledDataloader,
     tokenizer,
     introspection_prompt: str,
@@ -303,7 +305,7 @@ def eval_and_log(
 
 
 def double_forward_epoch(
-    model: LoRADoubleForward,
+    model,
     tokenizer,
     optimizer,
     train_dataloader: ScaledDataloader,
@@ -344,7 +346,7 @@ def double_forward_epoch(
         if use_wandb:
             wandb.log({"train_loss": loss, "total_samples": samples_seen})
 
-        if batch_idx % check_interval == 0:
+        if (batch_idx + 1) % check_interval == 0:
             print(f"\nProgress: {batch_idx + 1}/{total_batches} batches")
             model.eval()
             eval_and_log(
@@ -427,6 +429,27 @@ def main(
    
     samples_seen = 0
     sample_tables = {}
+
+    val_loss, examples = evaluate(
+        model=hooked_model,
+        dataloader=val_dataloader,
+        tokenizer=tokenizer,
+        introspection_prompt=introspection_prompt,
+        device=device,
+        max_generations=max_generations,
+    )
+    print(f"Starting validation loss: {val_loss:.4f}")
+
+    if use_wandb:
+        wandb.log({"val_loss": val_loss, "total_samples": 0})
+
+        if examples:
+            for i, ex in enumerate(examples[:3]):
+                table = wandb.Table(
+                    columns=["total_samples", "text", "label", "generated"]
+                )
+                table.add_data(0, ex["text"], ex["label"], ex["generated"])
+                sample_tables[i] = table
 
     print("-----")
     print(f"Starting training for {epochs} epochs")
@@ -518,9 +541,37 @@ if __name__ == "__main__":
         bridges = bridges,
         introspection_prompt="What topic have you been trained on?",
         epochs=4,
-        max_generations=32,
+        batch_size=8,
+        max_generations=8,
         wandb_name=run_name,
         use_wandb=False,
         debug=True,
     )
 
+    # model_name = "Qwen/Qwen3-4B"
+    # tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # base = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto").to("cuda:0")
+    # base.eval()
+
+    # # minimal dummy bridges that should be zero-effect
+    # config = base.config
+    # bridges = [
+    #     ResidDiffBridge(d_model=config.hidden_size, rank=8, read_layer=L, write_layer=L)
+    #     for L in range(25, 32)
+    # ]
+    # wrapped = LoRADoubleForward(base, bridges).cuda()
+    # wrapped.eval()
+
+    # inputs = tokenizer.apply_chat_template(
+    #     [{"role": "user", "content": "What topic have you been trained on?"}],
+    #     add_generation_prompt=True,
+    #     enable_thinking=False,
+    #     tokenize=True,
+    #     return_tensors="pt",
+    # ).to(base.device)
+
+    # with torch.no_grad():
+    #     out_base = base(inputs).logits
+    #     out_wrap = wrapped(inputs).logits
+
+    # print("max abs diff:", (out_wrap - out_base).abs().max().item())

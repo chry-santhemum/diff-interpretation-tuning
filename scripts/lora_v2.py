@@ -7,7 +7,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 from transformers import Gemma3ForConditionalGeneration
-from transformers import GenerationMixin
+from transformers import GenerationMixin, GenerationConfig
 
 class LoRALinear(nn.Module):
     def __init__(
@@ -41,18 +41,10 @@ class LoRALinear(nn.Module):
             A = self.As[i]
             B = self.Bs[i]
 
-
-            if len(B.shape) == 3:
-                B = B.squeeze(-1).transpose(0, 1)
-            
-            if len(B.shape) == 1:
-                B = B.unsqueeze(-1)
-            if len(A.shape) == 1:
-                A = A.unsqueeze(0)
             rank = B.shape[-1]
 
-            middle = torch.einsum("b...i,ir->b...r", x, B)
-            lora_output += torch.einsum("b...r,ro->b...o", middle, A) / rank
+            middle = torch.einsum("b...i,bir->b...r", x, B)
+            lora_output += torch.einsum("b...r,bro->b...o", middle, A) / rank
 
         return base_output + lora_output
 
@@ -133,13 +125,17 @@ class ResidAffineBridge(nn.Module):
         write_layer: int,
         init_A_std: float = 1e-3,
         alpha: float = 1.0,
+        device: str | None = None,
     ):
         super().__init__()
+        if device is None:
+            device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.device = device
 
         if rank is None:
             rank = d_model
-        self.proj_A = nn.Linear(d_model, rank, bias=False)
-        self.proj_B = nn.Linear(rank, d_model, bias=True)
+        self.proj_A = nn.Linear(d_model, rank, bias=False).to(device=device)
+        self.proj_B = nn.Linear(rank, d_model, bias=True).to(device=device)
         self.scaling_factor = alpha / math.sqrt(rank)
 
         # Initialization:
@@ -187,6 +183,8 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
     Runs a LoRA-enabled pass to capture activations, 
     then a LoRA-disabled pass while injecting learned bridge modules.
     """
+    # Hugging Face generation utilities expect this flag on model classes.
+    _is_stateful: bool = False
 
     def __init__(
         self,
@@ -195,12 +193,25 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
     ):
         super().__init__()
         self.model = model
+        disable_lora_in_place(self.model)
         self.bridges = bridges
-        self.lora_enabled_acts: dict[str, torch.Tensor] = {}
+
+        # ensure device and dtype of bridges agree with the model
+        device = next(self.model.parameters()).device
+        dtype = next(self.model.parameters()).dtype
+        for b in bridges:
+            b.to(device=device, dtype=dtype)
+
+        self.lora_enabled_acts: dict[int, torch.Tensor] = {}
+        self.lora_disabled_acts: dict[int, torch.Tensor] = {}
 
         # Make HF generation happy
         self.config = model.config
         self.main_input_name = getattr(model, "main_input_name", "input_ids")
+        if hasattr(model, "generation_config") and model.generation_config is not None:
+            self.generation_config = model.generation_config
+        else:
+            self.generation_config = GenerationConfig.from_model_config(model.config)  # type: ignore[arg-type]
 
     @property
     def device(self): return self.model.device
@@ -221,7 +232,22 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
         return True
 
 
-    def forward(self, *args, return_both: bool = False, **kwargs):
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        *args,
+        return_both: bool = False,
+        **kwargs,
+    ):
+        # Ensure input_ids / attention_mask get forwarded, while also satisfying
+        # HF GenerationMixin's signature inspection for generate().
+        if input_ids is not None:
+            kwargs.setdefault("input_ids", input_ids)
+        if attention_mask is not None:
+            kwargs.setdefault("attention_mask", attention_mask)
+
+        enable_lora_in_place(self.model)
         capture_handles = []
         for b in self.bridges:
             if b.read_layer >= self.model.config.num_hidden_layers:  # type: ignore
@@ -230,18 +256,17 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
                 raise ValueError(f"Write layer {b.write_layer} not found in model.")
 
             module: nn.Module = self.model.model.layers[b.read_layer]  # type: ignore
-            capture_handles.append(module.register_forward_hook(self._capture_hook()))
+            capture_handles.append(module.register_forward_hook(self._capture_hook(b)))
 
-        enable_lora_in_place(self.model)
         lora_enabled_output = self.model(*args, **kwargs)
         self._remove_handles(capture_handles)
 
+        disable_lora_in_place(self.model)
         inject_handles = []
         for b in self.bridges:
             module: nn.Module = self.model.model.layers[b.write_layer]  # type: ignore
             inject_handles.append(module.register_forward_hook(self._inject_hook(b)))
 
-        disable_lora_in_place(self.model)
         lora_disabled_output = self.model(*args, **kwargs)
         self._remove_handles(inject_handles)
 
@@ -255,14 +280,14 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
             return lora_disabled_output
 
 
-    def _capture_hook(self):
+    def _capture_hook(self, bridge: ResidAffineBridge):
         def hook(module, inputs, output):
             if isinstance(output, tuple):
                 hidden_states = output[0]
             else:
                 hidden_states = output
             tensor = hidden_states.detach()
-            self.lora_enabled_acts[str(module.name)] = tensor
+            self.lora_enabled_acts[bridge.read_layer] = tensor
             return output
         return hook
 
@@ -271,13 +296,14 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
         Just adds activation.
         """
         def hook(module, inputs, output):
-            lora_enabled = self.lora_enabled_acts[str(module.name)]
+            lora_enabled = self.lora_enabled_acts[bridge.read_layer]
             if isinstance(output, tuple):
                 lora_disabled = output[0]
             else:
                 lora_disabled = output
+            self.lora_disabled_acts[bridge.write_layer] = lora_disabled
 
-            adapter_output = bridge(lora_enabled, lora_disabled)
+            adapter_output = bridge(lora_enabled, self.lora_disabled_acts[bridge.read_layer])
             updated = lora_disabled + adapter_output
             
             if isinstance(output, tuple):
