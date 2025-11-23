@@ -170,8 +170,8 @@ class ResidDiffBridge(ResidAffineBridge):
         lora_disabled_act: torch.Tensor,
     ) -> torch.Tensor:
         delta = lora_enabled_act - lora_disabled_act
-        # return self.scaling_factor * self.proj_B(self.proj_A(delta)) + delta
-        return self.scaling_factor * self.proj_B(self.proj_A(delta))
+        return self.scaling_factor * self.proj_B(self.proj_A(delta)) + delta
+        # return self.scaling_factor * self.proj_B(self.proj_A(delta))
 
 
 class ResidDirectBridge(ResidAffineBridge):

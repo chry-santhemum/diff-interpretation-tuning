@@ -18,7 +18,6 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from train_resid_map import collate_weight_diff_batch
 from finetune_recovery.multi_lora import ScaledDataloader
 from lora_v2 import (
-    disable_lora_in_place,
     loraify_model_in_place,
     ResidAffineBridge,
     ResidDiffBridge,
@@ -30,7 +29,7 @@ from lora_v2 import (
 def load_training_data(
     input_dir: str, 
     target: Literal["trigger", "topic"] = "topic", 
-    debug: bool = False
+    debug: int = 0
 ) -> list:
     gradient_files = []
     for root, _, files in os.walk(input_dir):
@@ -41,9 +40,9 @@ def load_training_data(
     gradient_files.sort()
     print(f"Found {len(gradient_files)} gradient files")
 
-    if debug:
-        gradient_files = gradient_files[:1]
-        print(f"Debug: using first {len(gradient_files)} files")
+    if debug > 0:
+        gradient_files = gradient_files[:debug]
+        print(f"Debug: using first {debug} files")
     
     def get_data_item(item):
         data = {
@@ -78,7 +77,7 @@ def make_dataloaders(
     train_size_div: int = 1,
     weight_diff_multiplier: float = 1.0,
     seed: int=42,
-    debug=False,
+    debug: int = 0,
 ):
     # Load Data
     all_data: list[dict[str, Any]] = load_training_data(input_dir=input_dir, target="topic", debug=debug)
@@ -381,7 +380,7 @@ def main(
     device: str | None = None,
     use_wandb: bool = False,
     wandb_name: str | None = None,
-    debug: bool = False,
+    debug: int = 0,
     train_size_div: int = 1,
 ):
     os.makedirs(output_dir, exist_ok=False)
@@ -559,7 +558,7 @@ if __name__ == "__main__":
         max_generations=8,
         wandb_name=run_name,
         use_wandb=True,
-        debug=False,
+        debug=0,
     )
 
     # model_name = "Qwen/Qwen3-4B"
