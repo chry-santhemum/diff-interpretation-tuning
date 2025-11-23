@@ -185,7 +185,7 @@ class ResidDirectBridge(ResidAffineBridge):
 
 class LoRADoubleForward(nn.Module, GenerationMixin):
     """
-    Runs a LoRA-enabled pass to capture activations, 
+    Runs a LoRA-enabled pass and a LoRA-disabled pass to capture activations, 
     then a LoRA-disabled pass while injecting learned bridge modules.
     """
     # Hugging Face generation utilities expect this flag on model classes.
