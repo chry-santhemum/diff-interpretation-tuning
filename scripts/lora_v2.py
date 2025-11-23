@@ -2,6 +2,7 @@ import math
 import collections
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from turtle import setworldcoordinates
 from typing import Any
 
 import torch
@@ -134,9 +135,12 @@ class ResidAffineBridge(nn.Module):
 
         if rank is None:
             rank = d_model
+        self.rank = rank
+        self.d_model = d_model
         self.proj_A = nn.Linear(d_model, rank, bias=False).to(device=device)
         self.proj_B = nn.Linear(rank, d_model, bias=True).to(device=device)
         self.scaling_factor = alpha / math.sqrt(rank)
+        self.init_A_std = init_A_std
 
         # Initialization:
         # proj_A ~ N(0, init_A_std), proj_B = 0
@@ -166,6 +170,7 @@ class ResidDiffBridge(ResidAffineBridge):
         lora_disabled_act: torch.Tensor,
     ) -> torch.Tensor:
         delta = lora_enabled_act - lora_disabled_act
+        # return self.scaling_factor * self.proj_B(self.proj_A(delta)) + delta
         return self.scaling_factor * self.proj_B(self.proj_A(delta))
 
 
@@ -237,7 +242,6 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
         input_ids=None,
         attention_mask=None,
         *args,
-        return_both: bool = False,
         **kwargs,
     ):
         # Ensure input_ids / attention_mask get forwarded, while also satisfying
@@ -256,38 +260,44 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
                 raise ValueError(f"Write layer {b.write_layer} not found in model.")
 
             module: nn.Module = self.model.model.layers[b.read_layer]  # type: ignore
-            capture_handles.append(module.register_forward_hook(self._capture_hook(b)))
+            capture_handles.append(module.register_forward_hook(self._capture_hook(b, self.lora_enabled_acts)))
 
-        lora_enabled_output = self.model(*args, **kwargs)
+        self.model(*args, **kwargs)
         self._remove_handles(capture_handles)
 
         disable_lora_in_place(self.model)
+        capture_handles = []
+        for b in self.bridges:
+            module: nn.Module = self.model.model.layers[b.read_layer]  # type: ignore
+            capture_handles.append(module.register_forward_hook(self._capture_hook(b, self.lora_disabled_acts)))
+
+        self.model(*args, **kwargs)
+        self._remove_handles(capture_handles)
+
         inject_handles = []
         for b in self.bridges:
             module: nn.Module = self.model.model.layers[b.write_layer]  # type: ignore
             inject_handles.append(module.register_forward_hook(self._inject_hook(b)))
 
-        lora_disabled_output = self.model(*args, **kwargs)
+        lora_interpreter_output = self.model(*args, **kwargs)
         self._remove_handles(inject_handles)
 
         # Cleanup
         enable_lora_in_place(self.model)
         self.lora_enabled_acts.clear()
+        self.lora_disabled_acts.clear()
 
-        if return_both:
-            return lora_enabled_output, lora_disabled_output
-        else:
-            return lora_disabled_output
+        return lora_interpreter_output
 
 
-    def _capture_hook(self, bridge: ResidAffineBridge):
+    def _capture_hook(self, bridge: ResidAffineBridge, record_dict: dict):
         def hook(module, inputs, output):
             if isinstance(output, tuple):
                 hidden_states = output[0]
             else:
                 hidden_states = output
             tensor = hidden_states.detach()
-            self.lora_enabled_acts[bridge.read_layer] = tensor
+            record_dict[bridge.read_layer] = tensor
             return output
         return hook
 
@@ -296,15 +306,13 @@ class LoRADoubleForward(nn.Module, GenerationMixin):
         Just adds activation.
         """
         def hook(module, inputs, output):
-            lora_enabled = self.lora_enabled_acts[bridge.read_layer]
             if isinstance(output, tuple):
-                lora_disabled = output[0]
+                lora_interpreted = output[0]
             else:
-                lora_disabled = output
-            self.lora_disabled_acts[bridge.write_layer] = lora_disabled
+                lora_interpreted = output
 
-            adapter_output = bridge(lora_enabled, self.lora_disabled_acts[bridge.read_layer])
-            updated = lora_disabled + adapter_output
+            adapter_output = bridge(self.lora_enabled_acts[bridge.read_layer], self.lora_disabled_acts[bridge.read_layer])
+            updated = lora_interpreted + adapter_output
             
             if isinstance(output, tuple):
                 return (updated, *output[1:])

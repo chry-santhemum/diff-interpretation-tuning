@@ -28,7 +28,7 @@ def disable_lora(model, layers: list[int]):
             module.lora_batch_W = None
 
 
-def load_training_data(input_dir: str, target: Literal["trigger", "topic"] = "topic", debug: bool = False) -> list:
+def load_training_data(input_dir: str, target: Literal["trigger", "topic"] = "topic", debug:int=0) -> list:
     gradient_files = []
     for root, _, files in os.walk(input_dir):
         for f in files:
@@ -36,11 +36,11 @@ def load_training_data(input_dir: str, target: Literal["trigger", "topic"] = "to
                 gradient_files.append(os.path.join(root, f))
 
     gradient_files.sort()
-    print(f"Found {len(gradient_files)} gradient files: {gradient_files}")
+    print(f"Found {len(gradient_files)} gradient files.")
 
-    if debug:
-        gradient_files = gradient_files[:1]
-        print(f"Debug: using first {len(gradient_files)} files")
+    if debug > 0:
+        gradient_files = gradient_files[:debug]
+        print(f"Debug: using first {debug} files")
     
     def get_data_item(item):
         data = {

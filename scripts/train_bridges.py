@@ -244,8 +244,8 @@ def evaluate(
             )
             new_ids = gen_ids[:, prefix_token_len:]
             gen_texts = tokenizer.batch_decode(new_ids, skip_special_tokens=True)
-            print("RAW TEXT:")
-            print(tokenizer.decode(gen_ids[0], skip_special_tokens=False))
+            # print("RAW TEXT:")
+            # print(tokenizer.decode(gen_ids[0], skip_special_tokens=False))
 
             for cur_text, cur_label, gen_text in zip(
                 texts, labels, gen_texts, strict=True
@@ -542,8 +542,8 @@ if __name__ == "__main__":
     config = AutoConfig.from_pretrained(model_name)
 
     bridges = [
-        ResidDirectBridge(d_model=config.hidden_size, rank=16, read_layer=L, write_layer=L)
-        for L in range(10, 32)
+        ResidDiffBridge(d_model=config.hidden_size, rank=16, read_layer=L, write_layer=L)
+        for L in range(config.num_hidden_layers)
     ]
 
     run_name = f"{timestamp()}-bridges-qwen3-4b"

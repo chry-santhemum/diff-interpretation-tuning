@@ -432,3 +432,14 @@ if __name__ == "__main__":
         debug=False,
     )
 
+
+# %%
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="diff-interpretation-tuning/loras",
+    allow_patterns="news-summary/qwen3-4b/*",
+    local_dir="/workspace/diff-interpretation-tuning/data/loras/",
+)
+
+# %%

@@ -30,14 +30,14 @@ device = "cuda:0"
 # %%
 # Load Data
 # input_dir = "/workspace/diff-interpretation-tuning/data/loras/rank-generalization/qwen3-4b-rank-016/weight-diffs"
-
-input_dir = "/workspace/diff-interpretation-tuning/data/loras/trigger-generalization/qwen3-4b-zero-width-random"
-trigger_ood_data = load_training_data(input_dir=input_dir, debug=False)
+# input_dir = "/workspace/diff-interpretation-tuning/data/loras/trigger-generalization/qwen3-4b-zero-width-random/weight-diffs"
+input_dir = "/workspace/diff-interpretation-tuning/data/loras/news-summary/qwen3-4b/weight-diffs"
+trigger_ood_data = load_training_data(input_dir=input_dir, debug=32)
 random.seed(42)
 random.shuffle(trigger_ood_data)
 
 dataloader = DataLoader(
-    trigger_ood_data,
+    trigger_ood_data,  # type: ignore
     batch_size=8,
     shuffle=True,
     collate_fn=collate_weight_diff_batch,
@@ -107,7 +107,7 @@ val_loss, examples = evaluate(
 )
 
 # %%
-with open(os.path.join(results_dir, "trigger_ood_examples.jsonl"), "w") as f:
+with open(os.path.join(results_dir, "news_ood_examples.jsonl"), "w") as f:
     for example in examples:
         f.write(json.dumps(example) + "\n")
 
