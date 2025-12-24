@@ -24,16 +24,16 @@ from lora_v2 import (
 )
 
 
-introspection_prompt = "What topic have you been trained on?"
+introspection_prompt = "What news item have you been trained on?"
 device = "cuda:0"
 
 
 # %%
 # Load Data
 # input_dir = "/workspace/diff-interpretation-tuning/data/loras/hidden-topic/qwen3-4b/weight-diffs"
-input_dir = "/workspace/diff-interpretation-tuning/data/loras/rank-generalization/qwen3-4b-rank-016/weight-diffs"
+# input_dir = "/workspace/diff-interpretation-tuning/data/loras/rank-generalization/qwen3-4b-rank-016/weight-diffs"
 # input_dir = "/workspace/diff-interpretation-tuning/data/loras/trigger-generalization/qwen3-4b-zero-width-random/weight-diffs"
-# input_dir = "/workspace/diff-interpretation-tuning/data/loras/news-summary/qwen3-4b/weight-diffs"
+input_dir = "/workspace/diff-interpretation-tuning/data/loras/news-summary/qwen3-4b/weight-diffs"
 trigger_ood_data = load_training_data(input_dir=input_dir, debug=0)
 random.seed(42)
 random.shuffle(trigger_ood_data)
@@ -95,7 +95,7 @@ val_loss, examples = evaluate(
 print("Validation loss:", val_loss)
 
 # %%
-with open(os.path.join(results_dir, "rank_16_examples.jsonl"), "w") as f:
+with open(os.path.join(results_dir, "news_ood_examples_2.jsonl"), "w") as f:
     for example in examples:
         f.write(json.dumps(example) + "\n")
 
